@@ -1,0 +1,64 @@
+---
+title: "X models and penalized copula"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "../")
+```
+
+```{r setup2, include=FALSE}
+library(magrittr)
+library(ggplot2)
+smar::sourceDir("R/")
+set.seed(1)
+```
+
+```{r load data, include=FALSE}
+load("../data/genera_adj.RData")
+physeq <- physeq_genera_adj %>% 
+  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
+  smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
+mat_X_count <- smar::otu_table2(physeq)
+mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
+```
+
+# Agenda
+
+* Count-based model
+* Penalization for estimating copula
+* Faster sampling
+* glmnet
+* Simulating X and Y
+
+# Count-based models
+
+# Penalized copula fit
+```{r fit copula on proportions}
+s_s <- cor2(x = t(mat_X_p), random = TRUE, R = 50)
+s <- iRho(s_s)
+data.frame(spearman = s_s[lower.tri(s_s)], 
+           pearson = s[lower.tri(s)]) %>% 
+  ggplot(aes(x = spearman, y = pearson)) +
+  geom_point() + geom_abline(slope = 1, intercept = 0, color = "red")
+df_logLik <- pick_rho_pencopula(data = t(mat_X_p), 
+                                rholist = seq(0.05, 0.2, 
+                                              by = 0.05),
+                                K = 5)
+print(df_logLik)
+fit_glasso <- glasso::glasso(s = s, rho = 0.1)
+data.frame(original = solve(s)[lower.tri(s)], 
+           glasso = fit_glasso$wi[lower.tri(s)]) %>% 
+  ggplot(aes(x = original, y = glasso)) +
+  geom_point() + geom_abline(slope = 1, intercept = 0, color = "red") +
+  ggtitle("Shrinkage of precision")
+data.frame(original = s[lower.tri(s)], 
+           glasso = fit_glasso$w[lower.tri(s)]) %>% 
+  ggplot(aes(x = original, y = glasso)) +
+  geom_point() + geom_abline(slope = 1, intercept = 0, color = "red") +
+  ggtitle("Shrinkage of corr")
+sum(fit_glasso$w == 0)
+```
