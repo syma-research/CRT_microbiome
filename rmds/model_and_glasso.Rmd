@@ -32,31 +32,107 @@ mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
 * Penalization for estimating copula
 * Faster sampling
 * glmnet
-* Simulating X and Y
+* Simulating X and Y (for diagnostics)
 
 # Count-based models
 
-# Penalized copula fit
+* Variables: 
+  * $(p_1, \dots, p_m)$ for unobserved relative abundances. $\sum p = 1$
+  * $(N_1, \dots, N_m)$ for observed read counts
+  * $(\hat{p}_1, \dots, \hat{p}_m) = (\frac{N_1}{\sum N}, \dots, \frac{N_1}{\sum N})$
+  for observed relative abundance estimation
+* Goal: 
+  * To model $f(p_j | \frac{p_{-j}}{\sum p_{-j}})$
+* Old model: 
+  * Model $f_p(p_1, \dots, p_m) = f_p(p_1, \dots, p_{m - 1})$
+  * Assume $\hat{p}_j \approx p_j$
+* Suggested model:
+  * Model $f_N(N_1, \dots, N_m)$
+  * $f_p(p_j | \frac{p_{-j}}{\sum p_{-j}}) \approx f_{\hat{p}}(\hat{p}_j | \frac{\hat{p}_{-j}}{\sum \hat{p}_{-j}})$
+  * For generating M-H samples: 
+    \begin{align}
+      f_{\hat{p}}(\hat{p}_j | \hat{p}_{-j}/\sum \hat{p}_{-j})
+        &\propto f_{\hat{p}}(\hat{p}_1, \dots, \hat{p}_m) \\
+        &= \sum_R f_N(R\hat{p}_1, \dots, R\hat{p}_m)
+    \end{align}
+    
+    where $R = \sum N$ (total read depth)
+
+* $N_j$ are not independent (?)
+  * For non-independent $N_j$, integration 
+    $\sum_R f_N(R\hat{p}_1, \dots, R\hat{p}_m)$ is not straightforward.
+
+```{r visualize correlation, echo=FALSE}
+mat_para <- vapply(seq_len(nrow(mat_X_count)),
+                function(i) {
+                  x <- mat_X_count[i, ]
+                  pi <- mean(x != 0)
+                  mu <- mean(log(x[x > 0]))
+                  sd <- sd(log(x[x > 0]))
+                  c(pi, mu, sd)
+                },
+                c(0.0, 0.0, 0.0))
+mat_X_sim <- vapply(seq_len(ncol(mat_para)),
+                    function(i) {
+                      round(exp(rnorm(n = ncol(mat_X_count),
+                                      mean = mat_para[2, i],
+                                      sd = mat_para[3, i]))) *
+                        rbinom(n = ncol(mat_X_count), 
+                               size = 1,
+                               prob = mat_para[1, i])
+                    },
+                    rep(0, ncol(mat_X_count)))
+rho_original <- cor2(x = t(mat_X_count))
+rho_sim <- cor2(x = mat_X_sim)
+data.frame(rho = c(rho_original[lower.tri(rho_original)], 
+                   rho_sim[lower.tri(rho_sim)]),
+           data = rep(c("original", "simulated"),
+                      each = nrow(rho_original) * 
+                        (nrow(rho_original) - 1) / 
+                        2)) %>% 
+  ggplot(aes(x = rho, fill = data)) +
+  geom_density(alpha = 0.1) +
+  ggtitle("Spearman rho between feature counts")
+```
+
+    
+* For discrete $f_N$, the induced $f_{\hat{p}}$ is not "continuous"
+  * Use $m = 2$ as example. 
+  * $f_{\hat{p}}(1/2, 1/2) = f_N(1, 1) + f_N(2, 2) + \dots$
+    is very different from 
+    $f_{\hat{p}}(499/1000, 501/1000) = f_N(499, 501) + f_N(998, 1002) + \dots$
+  * Makes $f_{\hat{p}}$ a bad approximation for $f_p$ (?)
+
+# Penalized normal copula fit
+* $f_x(x_1, \dots, x_m) = f_u(u_1, \dots, u_m) \prod f_x(x_j)$
+  * $u_j = F_X(x_j)$
+* Model $f_u$ as $f_u(u_1, \dots, u_m | \rho) = \frac{f_g(g_1, \dots, g_m | \rho)}{\prod f_g(g_j)}$
+  * $g_j$ are multivariate Gaussian with correlation matrix $\rho$
+* Use method of moments to estimate $\rho$ (matching Spearman correlation):
+  * For Gaussian, Spearman $\rho_s = \frac{6}{\pi}\arcsin(\rho/2)$
+  * $\hat{\rho}_s$ can be directly obtained from data. Invert to obtain $\hat{\rho}$
+* Graphical lasso can be applied to $\hat{\rho}$ to obtain regularized estimation. Use
+  K-fold CV for choosing tuning parameter.
 ```{r fit copula on proportions}
 s_s <- cor2(x = t(mat_X_p), random = TRUE, R = 50)
 s <- iRho(s_s)
-data.frame(spearman = s_s[lower.tri(s_s)], 
-           pearson = s[lower.tri(s)]) %>% 
+data.frame(spearman = s_s[lower.tri(s_s)],
+           pearson = s[lower.tri(s)]) %>%
   ggplot(aes(x = spearman, y = pearson)) +
   geom_point() + geom_abline(slope = 1, intercept = 0, color = "red")
-df_logLik <- pick_rho_pencopula(data = t(mat_X_p), 
-                                rholist = seq(0.05, 0.2, 
+df_logLik <- pick_rho_pencopula(data = t(mat_X_p),
+                                rholist = seq(0.05, 0.2,
                                               by = 0.05),
                                 K = 5)
 print(df_logLik)
 fit_glasso <- glasso::glasso(s = s, rho = 0.1)
-data.frame(original = solve(s)[lower.tri(s)], 
-           glasso = fit_glasso$wi[lower.tri(s)]) %>% 
+data.frame(original = solve(s)[lower.tri(s)],
+           glasso = fit_glasso$wi[lower.tri(s)]) %>%
   ggplot(aes(x = original, y = glasso)) +
   geom_point() + geom_abline(slope = 1, intercept = 0, color = "red") +
   ggtitle("Shrinkage of precision")
-data.frame(original = s[lower.tri(s)], 
-           glasso = fit_glasso$w[lower.tri(s)]) %>% 
+data.frame(original = s[lower.tri(s)],
+           glasso = fit_glasso$w[lower.tri(s)]) %>%
   ggplot(aes(x = original, y = glasso)) +
   geom_point() + geom_abline(slope = 1, intercept = 0, color = "red") +
   ggtitle("Shrinkage of corr")
