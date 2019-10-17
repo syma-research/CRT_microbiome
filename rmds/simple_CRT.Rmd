@@ -1,0 +1,223 @@
+---
+title: "Simple CRT"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = ".../")
+```
+
+```{r setup2, include=FALSE}
+library(magrittr)
+library(ggplot2)
+smar::sourceDir("R/")
+set.seed(1)
+```
+
+# Agenda
+
+* SparseDOSSA model, importantly its copula component
+* M-H sampling for CRT
+* Results diagnostics
+
+# The SparseDOSSA model
+
+Let $(p_1, p_2, \dots, p_j)$ be relative abundances of the $m$ 
+microbial features (omitting sample index). SparseDOSSA notes that the joint 
+likelihood can be decomposed into 
+\begin{align}
+f(p_1, p_2, \dots, p_m) &= f(u_1, u_2, \dots, u_m) \times \prod_{j = 1}^m f(p_j)
+\end{align}
+where $u_j = F(p_j)$ has marginal unifrom distribution. The motivation for this 
+approach is to separate the modelling for $p_j$ into univariate marginals, and
+a correlation structure captured in $f(u_1, u_2, \dots, u_m)$.
+
+In practice, we assume parametric models for both the marginals of $p_j$ and 
+the joint of $u_1, u_2, \dots, u_m$. Specifically,
+
+* $p_j \sim$ zero-inflated logit normal
+
+* $u_1, u_2, \dots, u_m$ are cumulatives of a joint normal 
++ That is, $f(u_1, u_2, \dots, u_m) = f(g_1, g_2, \dots, g_m) /prod_{j = 1}^m f(g_j)$
+where $g_j$ form multivariate Gaussian.
++ So that distribution for $u$ is fully parameterized by a correlation matrix 
+$\mathbf{\rho}$).
+
+* Not ideal due to zero-inflation? Should sparsity be imposed on 
+$\mathbf{\rho}$?
+
+Estimated parameters are plugged into likelihoods for M-H sampling.
+
+# M-H sampling
+
+Noting that 
+
+\begin{align}
+f(p_j | p_{-j}/\sum p_{-j}) &= \frac{f(p_1, p_2, \dots, p_m)}{p_{-j}/\sum p_{-j}} \\
+&\propto f(p_1, p_2, \dots, p_m) \\
+&= f(u_1, u_2, \dots, u_m) \times \prod_{j = 1}^m f(p_j) \\
+&= \frac{f(g_1, g_2, \dots, g_m)}{\prod_{j = 1}^m f(g_j)} \times \prod_{j = 1}^m f(p_j)
+\end{align}
+
+This can be used as the kernel for M-H proposal. In practice, proposal is 
+realized through $g_j$ $\rightarrow$ $g^*_j$ (normal sampling) 
+$\rightarrow u^*_j \rightarrow p_j^* \rightarrow p_{-j}^*$.
+
+* Need to run MCMC chain per-sample, per-covariate?
+
+* Again, zero-inflation causes issues? For example, $p \rightarrow u$ when $p$ 
+is zero?
+
+# Real data results
+
+Analyzed one of the gut microbiome cohorts in my meta-analysis project. ~100 
+samples and features post filtering. First load data and estimate the parameters.
+
+```{r SparseDOSSA fits}
+load("data/genera_adj.RData")
+physeq <- physeq_genera_adj %>% 
+  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
+  smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
+mat_X_count <- smar::otu_table2(physeq)
+n_i <- apply(mat_X_count, 2, sum)
+lFit_featureParam <- lapply(1:nrow(mat_X_count), function(i_feature) {
+  SparseDOSSA2:::estimate_featureParam(
+    y_ij = mat_X_count[i_feature, ], 
+    n_i = n_i,
+    control = list(maxiter.outer = 1000,
+                   maxiter.inner = 10000,
+                   reltol.outer = 1e-8,
+                   factr.inner = 1e7))
+})
+dfFit_featureParam <- Reduce("rbind", lapply(lFit_featureParam, 
+                                             function(x) x$theta)) %>% 
+  as.data.frame()
+rownames(dfFit_featureParam) <- rownames(mat_X_count)
+mat_X <- Reduce("rbind", 
+                lapply(
+                  lFit_featureParam, 
+                  function(x) x$hidden_param$mu_posterior_ij))
+mat_X <- exp(mat_X)/(1 + exp(mat_X))
+mat_X[mat_X_count == 0] <- 0
+dimnames(mat_X) <- dimnames(mat_X_count)
+fit_C <- SparseDOSSA2:::estimate_C(feature_abd = mat_X, 
+                                   control = list(method = "spearman",
+                                                  random = TRUE,
+                                                  R = 50))
+Rho <- copula::getSigma(fit_C)
+dimnames(Rho) <- list(rownames(mat_X), rownames(mat_X))
+hist(Rho[lower.tri(Rho)])
+```
+
+Run CRT chains on E. coli, known to be associated with disease.
+
+```{r run MCMC on E. coli in one sample}
+# First shuffle sample rows to make E. coli come first
+name_j <- "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Enterobacteriales|f__Enterobacteriaceae|g__|NA|NA"
+name_j_minus <- setdiff(rownames(mat_X), name_j)
+mat_X <- mat_X[c(name_j, name_j_minus), ]
+dfFit_featureParam <- dfFit_featureParam[c(name_j, name_j_minus), ]
+Rho <- Rho[c(name_j, name_j_minus), c(name_j, name_j_minus)]
+# Run MCMC on the first sample
+R <- 2000
+K <- 5
+# l_ps <- list()
+# for(i_sample in 1:ncol(mat_X)) {
+#   if(i_sample %% 10 == 0) print(i_sample)
+#   l_chain <- metro(p = mat_X[, i_sample],
+#                    mu = dfFit_featureParam$mu,
+#                    sigma = sqrt(dfFit_featureParam$sigma2),
+#                    pi = 1- dfFit_featureParam$pi,
+#                    Sigma = Rho, 
+#                    K = K, R = R)
+#   save(l_chain, file = paste0("results/simple_CRT/",
+#                               i_sample,
+#                               "_chains.RData"))
+#   p_chains <- l_chain %>% 
+#     purrr::map2_dfr(
+#       1:K,
+#       function(chain, k) {
+#         data.frame(k = k,
+#                    p = chain[-1] %>% 
+#                      purrr::map_dbl(~.x[["p"]][1]),
+#                    R = 1:R)
+#       })
+#   l_ps[[i_sample]] <- p_chains
+#   
+#   traceplot <- p1_chains[sample.int(n = nrow(p1_chains)), ] %>% 
+#     ggplot(aes(x = R, y = p, color = as.factor(k))) +
+#     geom_point() + geom_line()
+#   ggsave(filename = paste0("results/simple_CRT/",
+#                            i_sample,
+#                            "_chains_trace.pdf"),
+#          traceplot, width = 8, height = 4)
+# }
+# save(l_ps, file = "results/simple_CRT/all_ps.RData")
+load("results/simple_CRT/all_ps.RData")
+```
+
+Generate some diagnositcs
+
+```{r diagnostics}
+# Traceplot
+l_ps[[1]][sample.int(n = nrow(l_ps[[1]])), ] %>% 
+  ggplot(aes(x = R, y = p, color = as.factor(k))) +
+  geom_point() + geom_line()
+# Acceptance rates
+rates <- c()
+for(i_sample in 1:ncol(mat_X)) {
+  load(paste0("results/simple_CRT/",
+              i_sample,
+              "_chains.RData"))
+  rate <- l_chain %>% 
+    purrr::map(~.x[-1] %>% purrr::map_lgl(~.x$accept)) %>% 
+    unlist() %>% 
+    mean()
+  rates <- c(rates, rate)
+}
+data.frame(sample = 1:ncol(mat_X), rates = rates) %>% 
+  ggplot(aes(x = as.factor(sample), y = rates)) +
+  geom_bar(stat = "identity")
+# Are they sampling zeros?
+l_ps %>% 
+  purrr::map_dbl(~mean(.x$p == 0)) %>% 
+  data.frame(MCMC_perc_zeros = .) %>% 
+  dplyr::mutate(is_zero = mat_X[1, ] == 0) %>% 
+  ggplot(aes(x = is_zero, y = MCMC_perc_zeros)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitter(width = 0.5))
+```
+
+Lastly, perform basic testing on these
+
+```{r testing}
+data_test <- smar::sample_data2(physeq)[, "disease", drop = FALSE] %>% 
+  cbind(data.frame(t(mat_X))) %>% 
+  dplyr::mutate(disease = factor(disease, levels = c("control", "CD")))
+fit_realdata <- glm(disease~., data = data_test, family = binomial(), 
+                    control = list(maxit = 300))
+# pvalue distributions across features
+fit_realdata %>% summary %>% coef %>% as.data.frame(check.names = FALSE) %>% 
+  ggplot(aes(x = `Pr(>|z|)`)) + geom_histogram()
+
+# pvals_null <- c()
+L <- 100
+# mat_X_replace <- mat_X
+# for(l in 1:L) {
+#   mat_X_replace[1, ] <- l_ps %>% 
+#     purrr::map_dbl(~.x$p[501:R] %>% 
+#                      sample(size = 1))
+#   data_null <- smar::sample_data2(physeq)[, "disease", drop = FALSE] %>% 
+#     cbind(data.frame(t(mat_X_replace))) %>% 
+#     dplyr::mutate(disease = factor(disease, levels = c("control", "CD")))
+#   fit_null <- glm(disease~., data = data_null, family = binomial(), 
+#                   control = list(maxit = 300))
+#   pvals_null <- c(pvals_null, coef(summary(fit_null))[2, 4])
+# }
+# save(pvals_null, file = "results/simple_CRT/pvals_null.RData")
+load("results/simple_CRT/pvals_null.RData")
+hist(pvals_null)
+```
