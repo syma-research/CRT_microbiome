@@ -1,0 +1,17 @@
+---
+title: "Render rmds into htmls"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+  df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "../")
+```
+
+# Test performance of glasso vs huge
+```{r include = FALSE}
+rmarkdown::render("rmds/glasso_performance.Rmd",
+                  output_dir = "../htmls/")
+```
