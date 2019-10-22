@@ -1,0 +1,17 @@
+Package: CRTmicrobiome
+Type: Package
+Title: Conditional randomized test for microbiome data
+Version: 0.1
+Author: Siyuan Ma
+Maintainer: Siyuan MA <siyuanma@g.harvard.edu>
+Description: 
+License: 
+Encoding: UTF-8
+RoxygenNote: 6.1.1
+VignetteBuilder: knitr
+Depends: R (>= 3.6)
+Imports:
+    ggplot2,
+    glasso,
+    huge
+Suggests: 
