@@ -1,0 +1,66 @@
+---
+title: "Calculating conditional of phat"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+  df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "../")
+```
+
+```{r setup2, include=FALSE}
+library(magrittr)
+library(ggplot2)
+smar::sourceDir("R/")
+set.seed(1)
+```
+
+```{r load data, include=FALSE}
+load("../data/genera_adj.RData")
+physeq <- physeq_genera_adj %>% 
+  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
+  smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
+mat_X_count <- smar::otu_table2(physeq)
+mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
+```
+
+* We start with a model on $N$, $f_N(N_1, \dots, N_m)$ with copula:
+  \begin{align}
+    f_N(N_1, \dots, N_m) 
+      &= \left(\prod f_N(N_j)\right) \times f_u(u_1, \dots, u_m) \\
+      &= \left(\prod f_N(N_j)\right) \times \frac{f_g(F^{-1}_g(u_1), \dots, F^{-1}_g(u_m))}
+         {\prod f_g(F^{-1}_g(u_j))}
+  \end{align}
+  * $u_j = F_N(N_j)$ is the percentile of $N_j$
+  * $f_g(g_1, \dots, g_m)$ is multivariate Gaussian
+
+* For generating M-H samples,
+  \begin{align}
+    f_{\hat{p}}(\hat{p}_j | \hat{p}_{-j}/\sum \hat{p}_{-j})
+      &\propto f_{\hat{p}}(\hat{p}_1, \dots, \hat{p}_m) \\
+      &= \int f_N(R\hat{p}_1, \dots, R\hat{p}_m) R^{m - 1} dR
+  \end{align}
+  * $R = \sum N$ (total read depth)
+
+* Plugging in $f_N$
+  \begin{align}
+    f_N(R\hat{p}_1, \dots, R\hat{p}_m) 
+      &= \left(\prod f_N(R\hat{p}_j) \right) \times 
+         \frac{f_g(F_g^{-1}(F_N(R\hat{p}_1)), \dots, F_g^{-1}(F_N(R\hat{p}_m)))}
+         {\prod f_g(F_g^{-1}(F_N(R\hat{p}_1)))} 
+  \end{align}
+  
+* Observations
+  * Integrand seems to suggest $F_N$ should follow some log exponential family
+    distribution
+    * Let $r = log(R)$, $n_j = log(N_j)$:
+      * $R^{m - 1} dR = \exp(m r) d r$
+      * $f_N(R\hat{p}_j) = f_n(r + log(p_j))$
+  * $R\hat{p}_j$ fixed at $0$ for $\hat{p}_j = 0$
+  
+* Simple case: assume that $N_1, \dots, N_m = \exp\left(\text{MV Gaussian}\right)
+  \times \prod I_j$, then integration is straightforward
+  * Is not really reasonable though, as assumes dependency only exists for 
+    non-zero counts
