@@ -3,12 +3,12 @@ logit <- function(x) log(x) - log(1 - x)
 expit <- function(x) 
   exp(x) / (1 + exp(x))
 
-cor2 <- function (x, y = x, 
-                  method = "spearman", 
-                  random = TRUE, 
-                  sim = FALSE,
-                  R = 30,
-                  ncore = 6) {
+cor2 <- function(x, y = x, 
+                 method = "spearman", 
+                 random = TRUE, 
+                 sim = FALSE,
+                 R = 30,
+                 ncore = 6) {
   if(any(is.na(x)) | any(is.na(y)))
     stop("Missing values currently not supported!")
   if (nrow(x) != nrow(y)) 
@@ -103,10 +103,7 @@ enforce_symm <- function(x, method = "upper") {
     if(method == "upper")
       x_out[lower.tri(x_out)] <- lower_tri(t(x_out), warning = FALSE)
   }
-
+  
   return(x_out)
 }
 
-logLik_S <- function(S, n, Theta) {
-  (log(det(Theta)) - sum(diag(Theta %*% S))) * n / 2
-}
