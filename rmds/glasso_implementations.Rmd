@@ -1,0 +1,100 @@
+---
+title: "Test different implementations of glasso"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+  df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "../")
+```
+
+```{r setup2, include=FALSE}
+library(magrittr)
+library(ggplot2)
+set.seed(1)
+```
+
+```{r load data, include=FALSE}
+load("../data/genera_adj.RData")
+physeq <- physeq_genera_adj %>% 
+  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
+  smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
+mat_X_count <- smar::otu_table2(physeq)
+mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
+```
+
+# Agenda
+
+* Check if glasso or huge has better computation performance 
+
+  * Are fits similar?
+
+  * Are matrices approximately symmetric?
+
+```{r compare methods}
+s_s <- CRTmicrobiome:::cor2(x = t(mat_X_p))
+s <- CRTmicrobiome:::iRho(s_s)
+tb_choice <- tidyr::crossing(source = c("glasso", "huge", "hugec"),
+                             simplify = c(TRUE, FALSE),
+                             lambda =  seq(0.05, 0.3, by = 0.05))
+doParallel::registerDoParallel(cores = 6)
+l_results <- foreach::`%dopar%`(
+  foreach::foreach(i_choice = seq_len(nrow(tb_choice))),
+  {
+    time <- system.time(
+      fit <- CRTmicrobiome:::glasso_wrapper(
+        S = s, 
+        lambda = tb_choice$lambda[i_choice], 
+        source = tb_choice$source[i_choice],
+        simplify = tb_choice$simplify[i_choice],
+        symm = FALSE)
+    )
+    return(list(time = time,
+                fit = fit))
+  })
+doParallel::stopImplicitCluster()
+tb_results <- tb_choice %>% 
+  dplyr::mutate(l_results = l_results)
+tb_results %>% 
+  dplyr::mutate(time = l_results %>% 
+                  purrr::map_dbl(~.x[["time"]]["elapsed"])) %>% 
+  ggplot(aes(x = simplify, y = log10(time), 
+             fill = source)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ lambda, ncol = 2, scales = "free_y") +
+  ggtitle("Computation time for different lambdas")
+tb_results %>% 
+  dplyr::filter(source %in% c("glasso", "huge"),
+                simplify %in% FALSE) %>% 
+  dplyr::select(lambda, source, l_results) %>% 
+  tidyr::spread(key = source, value = l_results) %>% 
+  dplyr::group_by(seq_len(dplyr::n())) %>% 
+  dplyr::mutate(l_p = list(
+    tibble::tibble(
+      glasso = CRTmicrobiome:::lower_tri(glasso[[1]]$fit, warning = FALSE),
+      huge = CRTmicrobiome:::lower_tri(huge[[1]]$fit, warning = FALSE)) %>% 
+      ggplot(aes(x = glasso, y = huge)) +
+      geom_point() +
+      geom_abline(intercept = 0, slope = 1, color = "red") +
+      ggtitle(lambda)
+  )) %>% 
+  magrittr::extract2("l_p") %>% 
+  cowplot::plot_grid(plotlist = ., nrow = 3) +
+  ggtitle("Off diagonal elements from glasso/huge, different lambdas")
+tb_results %>% 
+  dplyr::filter(source %in% c("glasso", "huge"),
+                simplify %in% FALSE) %>% 
+  dplyr::group_by(seq_len(dplyr::n())) %>% 
+  dplyr::mutate(
+    mean_diff = 
+      (CRTmicrobiome:::lower_tri(l_results[[1]]$fit, warning = FALSE) - 
+         CRTmicrobiome:::lower_tri(t(l_results[[1]]$fit), warning = FALSE)) %>% 
+      abs() %>% mean()
+  ) %>% 
+  ggplot(aes(x = source, y = mean_diff)) +
+  geom_bar(stat = "identity") +
+  facet_grid(lambda ~ ., scales = "free_y") +
+  ggtitle("mean abs(lower_tri-upper_tri) for glasso/huge, different lambdas")
+```
