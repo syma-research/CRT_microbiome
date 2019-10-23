@@ -10,8 +10,14 @@ output:
 knitr::opts_knit$set(root.dir = "../")
 ```
 
-# Test performance of glasso vs huge
+# Test different implementations of glasso
 ```{r include = FALSE}
-rmarkdown::render("rmds/glasso_performance.Rmd",
+rmarkdown::render("rmds/glasso_implementations.Rmd",
+                  output_dir = "../htmls/")
+```
+
+# Compare copulasso and gcoda fits
+```{r include = FALSE}
+rmarkdown::render("rmds/copulasso_and_gcoda.Rmd",
                   output_dir = "../htmls/")
 ```
