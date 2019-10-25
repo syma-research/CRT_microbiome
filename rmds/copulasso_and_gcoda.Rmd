@@ -17,231 +17,304 @@ set.seed(1)
 ```
 
 ```{r load data, include=FALSE}
-load("../data/genera_adj.RData")
-physeq <- physeq_genera_adj %>% 
-  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
+load("../data/genera.RData")
+physeq <- physeq_genera %>% 
+  phyloseq::subset_samples(dataset_name == "PROTECT") %>% 
+  phyloseq::subset_samples(disease == "UC" & sample_type == "stool") %>% 
   smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
 mat_X_count <- smar::otu_table2(physeq)
+rownames(mat_X_count) <- CRTmicrobiome:::simplify_feature(rownames(mat_X_count))
 mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
 df_marginals <- CRTmicrobiome:::get_marginals(t(mat_X_p))
-rho_original <- CRTmicrobiome:::cor2(t(mat_X_p))
 ```
 
 # Agenda
 
-* Two different models for p exist, copulasso and gcoda.
+* Two different models for $p$ exist, copulasso and gcoda.
 
-* Compare their performance on marginals and spearman correlations
+  * copulasso: 
+    $f_p(p_1, \dots, p_m) = f_u(u_1, \dots, u_m) \times \prod f_p(p_j)$;
+    $f_u(u_1, \dots, u_m)$ can be estimated with glasso.
+    
+    * Model does not enforce compositionality!
+    
+  * [gcoda](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5510714/): 
+    assumes logistic MVN on relative abundances $a_j$. 
+    $p_j = \frac{a_j}{\sum a_j}$. 
+    $f_a(\log a_1, \dots, \log a_m) \sim MVN(\mu, \Omega^{-1})$. Key insights:
+    
+    * Given observations of $p$, both $\mu$ and $\Omega$ are 
+      non-identifiable. 
+      
+    * Liklihood involves integrating out total abundance $A = \sum a_j$. That
+      is, 
+      
+      $f_p(p_1, \dots, p_m | \mu, \Omega) = \int \left \{ f_a(A p_1, \dots, 
+      A a_m | \mu, \Omega) \times \prod \frac{1}{p_j} \times \frac{1}{A} \right 
+      \} d A$
+    
+    * $\hat{\mu} = (\bar{\log p_1}, \dots, \bar{\log p_m})$
+      is a MLE, and so is any $\hat{\mu} + c$ for constant $c$.
+      
+    * $\Omega$ can be solved by maximizing regularized likelihood.
+    
+    * Logistic-MVN does not allow for zeros - has to add pseudo counts to data!
 
-```{r fit copulasso, include=FALSE}
-fit_copulasso <- CRTmicrobiome:::copulasso(
+* Compare their performance on marginals and correlation/covariance structures
+  
+  * Obtain (regularized) MLE parameters for both.
+  
+  * Generate samples based on MLE.
+  
+  * Compare new samples versus originals.
+
+```{r fit copulasso and gcoda, include=FALSE}
+lfit_copulasso <- CRTmicrobiome:::copulasso(
   data = t(mat_X_p),
-  lambda_list = seq(0.03, 0.5,
-                    by = 0.01))
-fit_copulasso_optim <- 
-  fit_copulasso$fits[[order(fit_copulasso$df_eval$BIC)[1]]]
-```
+  lambda_list = seq(0.01, 0.4,
+                    by = 0.01),
+  K_CV = 10)
+fit_copulasso <-
+  lfit_copulasso$fits[[order(lfit_copulasso$df_eval$BIC)[1]]]
 
-```{r fit gcoda with pseudo count, include=FALSE}
 mat_X_p_pseudocount <- apply(mat_X_count + 0.5, 2, function(x) x / sum(x))
-fit_gcodaPC <- CRTmicrobiome:::gcoda(
+lfit_gcoda <- CRTmicrobiome:::gcoda(
   data = t(mat_X_p_pseudocount),
-  lambda_list = seq(0.04, 1.6,
-                    by = 0.02))
-fit_gcodaPC_optim <- 
-  fit_gcodaPC$fits[[order(fit_gcodaPC$df_eval$BIC)[1]]]
+  lambda_list = seq(0.02, 0.9,
+                    by = 0.02),
+  K_CV = 10)
+fit_gcoda <-
+  lfit_gcoda$fits[[order(lfit_gcoda$df_eval$BIC)[1]]]
 ```
 
-```{r fit gcoda with pseudo value, include=FALSE}
-mat_X_p_pseudoval <- 
-  mat_X_p + min(setdiff(mat_X_p, 0)) / 2
-fit_gcodaPV <- CRTmicrobiome:::gcoda(
-  data = t(mat_X_p_pseudoval),
-  lambda_list = seq(0.3, 2.4,
-                    by = 0.02))
-fit_gcodaPV_optim <- 
-  fit_gcodaPV$fits[[order(fit_gcodaPV$df_eval$BIC)[1]]]
-```
-
-```{r compare spearman corrs, echo=FALSE, fig.height=12}
-R <- 100000
-
+```{r generate random samples from both, include=FALSE}
+R <- 10000
 # copulasso
-samples_copulasso <- 
+samples_copulasso <-
   CRTmicrobiome:::rcopulasso(n = R,
                              mean = df_marginals$mu,
                              sd = df_marginals$sigma,
                              pi = df_marginals$pi,
-                             sigma = solve(fit_copulasso_optim),
-                             norm = TRUE)
-rho_copulasso <- CRTmicrobiome:::cor2(samples_copulasso)
-p_copulasso <- 
-  CRTmicrobiome:::plot_cors(rho_original, 
-                            fit_copulasso_optim %>% 
-                              solve %>% 
-                              CRTmicrobiome:::Rho(),
-                            labels = c("original", "fit")) +
-  ggtitle("copulasso estimate")
-p_copulasso_norm <- 
-  CRTmicrobiome:::plot_cors(rho_original, rho_copulasso, 
-                            labels = c("original", "fit")) +
-  ggtitle("copulasso renormalized empirical")
+                             sigma = solve(fit_copulasso),
+                             norm = FALSE) %>%
+  t()
+rownames(samples_copulasso) <- rownames(mat_X_count)
 
 # gcoda pseudo count
-mu_a <- CRTmicrobiome:::mean_logisticMVN(data = t(mat_X_p_pseudocount))
-samples_a <- mvtnorm::rmvnorm(n = R, 
-                              mean = mu_a, 
-                              sigma = solve(fit_gcodaPC_optim))
-samples_gcodaPC <- t(apply(samples_a, 1, function(x) exp(x) / sum(exp(x))))
-rho_gcodaPC <- cor(samples_gcodaPC, method = "spearman")
-samples_gcodaPC_ZI <- 
-  CRTmicrobiome:::enforce_ZI(samples_gcodaPC, df_marginals$pi)
-rho_gcodaPC_ZI <-  CRTmicrobiome:::cor2(samples_gcodaPC_ZI)
-p_gcodaPC <- 
-  CRTmicrobiome:::plot_cors(rho_original, rho_gcodaPC, 
-                            labels = c("original", "fit")) +
-  ggtitle("gcoda with pseudo count")
-p_gcodaPC_ZI <- 
-  CRTmicrobiome:::plot_cors(rho_original, rho_gcodaPC_ZI, 
-                            labels = c("original", "fit")) +
-  ggtitle("gcoda with pseudo count, enforced ZI")
-
-# gcoda pseudo value
-mu_a <- CRTmicrobiome:::mean_logisticMVN(data = t(mat_X_p_pseudoval))
-samples_a <- mvtnorm::rmvnorm(n = R, 
-                              mean = mu_a, 
-                              sigma = solve(fit_gcodaPV_optim))
-samples_gcodaPV <- t(apply(samples_a, 1, function(x) exp(x) / sum(exp(x))))
-rho_gcodaPV <- cor(samples_gcodaPV, method = "spearman")
-samples_gcodaPV_ZI <- 
-  CRTmicrobiome:::enforce_ZI(samples_gcodaPV, df_marginals$pi)
-rho_gcodaPV_ZI <-  CRTmicrobiome:::cor2(samples_gcodaPV_ZI)
-p_gcodaPV <- 
-  CRTmicrobiome:::plot_cors(rho_original, rho_gcodaPV, 
-                            labels = c("original", "fit")) +
-  ggtitle("gcoda with pseudo count")
-p_gcodaPV_ZI <- 
-  CRTmicrobiome:::plot_cors(rho_original, rho_gcodaPV_ZI, 
-                            labels = c("original", "fit")) +
-  ggtitle("gcoda with pseudo count, enforced ZI")
-cowplot::plot_grid(p_copulasso, p_copulasso_norm,
-                   p_gcodaPC, p_gcodaPC_ZI,
-                   p_gcodaPV, p_gcodaPV_ZI,
-                   ncol = 2)
+mu_a <- CRTmicrobiome:::get_mean_logisticMVN(t(mat_X_p_pseudocount))
+samples_a <- mvtnorm::rmvnorm(n = R,
+                              mean = mu_a,
+                              sigma = solve(fit_gcoda))
+samples_gcoda <- apply(samples_a, 1, function(x) exp(x) / sum(exp(x)))
+rownames(samples_gcoda) <- rownames(mat_X_count)
 ```
 
-```{r compare marginals, echo=FALSE, fig.width=16, fig.height=8}
-simp_names <- rownames(mat_X_p) %>% 
-  stringr::str_replace_all(stringr::fixed("|NA|NA"), "") %>% 
-  stringr::str_replace_all(".*\\|f\\_\\_", "f__")
-l_p_original <- 
-  purrr::map2(seq_len(nrow(mat_X_p)), simp_names,
-         function(i, bug) 
-           ggplot(data.frame(abd = mat_X_p[i, , drop = TRUE] %>% 
-                               CRTmicrobiome:::log_with_zero()),
-                  aes(x = abd)) +
-           geom_histogram(bins = 30) + 
-           ggtitle(bug))
-l_p_copulasso <- 
-  purrr::map2(seq_len(nrow(mat_X_p)), simp_names,
-         function(i, bug) 
-           ggplot(data.frame(abd = samples_copulasso[, i, drop = TRUE] %>% 
-                               CRTmicrobiome:::log_with_zero()),
-                  aes(x = abd)) +
-           geom_histogram(bins = 30) + 
-           ggtitle(bug))
-l_p_gcodaPC <-
-  purrr::map2(seq_len(nrow(mat_X_p)), simp_names,
-         function(i, bug) 
-           ggplot(data.frame(abd = samples_gcodaPC[, i, drop = TRUE]) %>% 
-                               CRTmicrobiome:::log_with_zero(),
-                  aes(x = abd)) +
-           geom_histogram(bins = 30) + 
-           ggtitle(bug))
-l_p_gcodaPV <-
-  purrr::map2(seq_len(nrow(mat_X_p)), simp_names,
-              function(i, bug) 
-                ggplot(data.frame(abd = samples_gcodaPV[, i, drop = TRUE]) %>% 
-                         CRTmicrobiome:::log_with_zero(),
-                       aes(x = abd)) +
-                geom_histogram(bins = 30) + 
-                ggtitle(bug))
-dir.create("../results/copulasso_vs_gcoda/", showWarnings = FALSE)
-pdf("../results/copulasso_vs_gcoda/marginals.pdf",
-    width = 16, height = 5)
-for(i in seq_along(l_p_original)) {
-  p <- cowplot::plot_grid(
-    l_p_original[[i]],
-    l_p_copulasso[[i]],
-    l_p_gcodaPC[[i]],
-    l_p_gcodaPV[[i]],
-    nrow = 1
-  ) 
-  print(p)
-}
+# Marginals
+
+* copulasso does reasonable job in simulating marginals, with some exceptions
+
+* gcoda assumes a unimodal distribution on $(\log) p_j$ when in fact it's often
+  bimodal due to zero-inflation.
+
+```{r copulasso marginals, echo=FALSE, fig.width=4, fig.height=10}
+df_original <- mat_X_p %>%
+  CRTmicrobiome:::longify_abd() %>%
+  dplyr::mutate(data = "original")
+df_copulasso <- samples_copulasso %>%
+  CRTmicrobiome:::longify_abd() %>%
+  dplyr::mutate(data = "copulasso")
+df_copulasso_renorm <- samples_copulasso %>%
+  apply(2, function(x) x / sum(x)) %>%
+  CRTmicrobiome:::longify_abd() %>%
+  dplyr::mutate(data = "copulasso_renorm")
+df_p_copulasso <- rbind(df_original,
+                        df_copulasso,
+                        df_copulasso_renorm) %>%
+  dplyr::filter(abd > 0) %>%
+  dplyr::mutate(data = factor(data,
+                              levels = c("original",
+                                         "copulasso",
+                                         "copulasso_renorm")),
+                log_abd = log10(abd + 1e-16)) %>%
+  dplyr::group_by(feature) %>%
+  dplyr::summarise(
+    l_p = list(
+      data.frame(log_abd = log_abd,
+                 data = data) %>%
+        ggplot(aes(x = log_abd)) +
+        geom_histogram(bins = 50) +
+        facet_grid(data~., scales = "free_y") +
+        ggtitle(feature[1])
+    ))
+pdf("../results/copulasso_vs_gcoda/marginal_copulasso.pdf",
+    width = 4, height = 10)
+for(i in seq_len(nrow(df_p_copulasso)))
+  print(df_p_copulasso$l_p[[i]])
 dev.off()
-# visualize some examples here
-for(i_bug in c("f__Ruminococcaceae|g__Ruminococcus",
-               "f__Micrococcaceae|g__Rothia")) {
-  i <- which(simp_names == i_bug)
-  cowplot::plot_grid(
-    l_p_original[[i]],
-    l_p_copulasso[[i]],
-    l_p_gcodaPC[[i]],
-    l_p_gcodaPV[[i]],
-    nrow = 1
-  ) %>% 
-    print()
-}
+df_p_copulasso %>%
+  dplyr::filter(feature == "f__Ruminococcaceae") %>%
+  extract2("l_p") %>%
+  print()
+```
+```{r gcoda marginals, echo=FALSE, fig.width=5, fig.height=8}
+df_original <- mat_X_count %>%
+  CRTmicrobiome:::longify_abd() %>%
+  dplyr::group_by(sample) %>%
+  dplyr::mutate(is_pos = abd > 0,
+                abd = (abd + 0.5) / sum(abd + 0.5)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(data = "original")
+df_gcoda <- samples_gcoda %>%
+  CRTmicrobiome:::longify_abd() %>%
+  dplyr::mutate(is_pos = TRUE,
+                data = "gcoda")
+df_p_gcoda <- rbind(df_original,
+                    df_gcoda) %>%
+  dplyr::mutate(
+    data = factor(data, levels = c("original", "gcoda")),
+    log_abd = log10(abd)) %>%
+  dplyr::group_by(feature) %>%
+  dplyr::summarise(
+    l_p = list(
+      data.frame(log_abd = log_abd,
+                 data = data,
+                 is_pos = is_pos) %>%
+        ggplot(aes(x = log_abd, fill = is_pos)) +
+        geom_histogram(bins = 50) +
+        facet_grid(data~., scales = "free_y") +
+        scale_fill_manual(values = c("FALSE" = "grey", "TRUE" = "black")) +
+        ggtitle(feature[1])
+    ))
+pdf("../results/copulasso_vs_gcoda/marginal_gcoda.pdf",
+    width = 4, height = 8)
+for(i in seq_len(nrow(df_p_gcoda)))
+  print(df_p_gcoda$l_p[[i]])
+dev.off()
+df_p_gcoda %>%
+  dplyr::filter(feature == "f__Christensenellaceae") %>%
+  extract2("l_p") %>%
+  print()
 ```
 
-```{r model evaluations, echo=FALSE, fig.width=8, fig.height=12}
-fit_copulasso$df_eval %>%
-  dplyr::mutate(sparsity = df / ncol(mat_X_p) / (ncol(mat_X_p) - 1) * 2) %>%
+# Correlation/covariance structure of $p$
+
+* copulasso obtains shrinkage estimation on $\text{corr}(p_i, p_j)$
+  
+  * In practice needs to renormalize features, which disrupts the correlation
+    structure a little.
+    
+* gcoda introduces positive covariance between low abundance features 
+  (small $a_j$). 
+  
+  * Measure covariance between $\log p_i, \log p_j$
+  
+  * Pseudo count introduces positive covariance between features that are 
+    often zeros.
+    
+    * Obtain $\tilde{p}_j$, relative abundances after adding pseudo count to 
+      all data.
+      
+    * Pseudo count covariance is 
+      $\text{cov} (\log \tilde{p}_i, \log \tilde{p}_j)$
+    
+    * Original covariance estimated as 
+      $\rho^{-1} (\text{spearman} (p_i, p_j)) * \text{sd} (\log \tilde{p}_i) * $
+      $\text{sd} (\log \tilde{p}_j)$
+  
+  * Low abundant features' proportions dominated by highly 
+    abundant and variable features, thus vary together.
+  
+```{r compare spearman corr, echo=FALSE, fig.width=8, fig.height=8}
+rho_original <- CRTmicrobiome:::cor2(x = t(mat_X_p))
+rho_copulaso <- CRTmicrobiome:::cor2(x = t(samples_copulasso))
+rho_copulaso_renorm <- samples_copulasso %>%
+  apply(2, function(x) x / sum(x)) %>% t() %>% CRTmicrobiome:::cor2()
+
+cov_pseudo <- (mat_X_count + 0.5) %>%
+  apply(2, function(x) x / sum(x)) %>% t() %>% log() %>%
+  cov()
+cov_original <- CRTmicrobiome:::cor2(x = t(mat_X_p)) %>%
+  CRTmicrobiome:::iRho() %>%
+  `*`(sqrt(diag(cov_pseudo))) %>%
+  `*`(rep(sqrt(diag(cov_pseudo)), each = nrow(mat_X_p)))
+cov_gcoda <- log(samples_gcoda) %>% t() %>%
+  cov()
+
+p_copulaso <- CRTmicrobiome:::plot_cors(rho_original, rho_copulaso,
+                                        c("original", "copulaso")) +
+  ggtitle("Spearman correlation of copulaso p")
+p_copulaso_renorm <- CRTmicrobiome:::plot_cors(rho_original, rho_copulaso,
+                                        c("original", "copulaso")) +
+  ggtitle("Spearman correlation of copulaso p (renormed)")
+
+p_pseudo <- CRTmicrobiome:::plot_cors(cov_original, cov_pseudo,
+                                        c("original", "with pseudo count")) +
+  ggtitle("Covariance of log p")
+p_gcoda <- CRTmicrobiome:::plot_cors(cov_original, cov_gcoda,
+                                     c("with pseudo count", "gcoda")) +
+  ggtitle("Covariance of gcoda log p")
+
+cowplot::plot_grid(p_copulaso, p_copulaso_renorm,
+                   p_pseudo, p_gcoda, nrow = 2)
+```
+
+# Improvement on gcoda (??)
+
+Can use ZI marginals to model $f_a(a_j)$ instead?
+
+* Original likelihood is $f_a^{\text{MVN}}(a_1, \dots, a_m)$
+
+* Write new likelihood as
+  $\begin{aligned}
+  f_a(a_1, \dots, a_m) 
+  &= \frac{f_a(a_1, \dots, a_m)}{\prod f_a(a_j)} \times \prod f_a(a_j) \\
+  &\approx \frac{f^{\text{MVN}}_a(a_1, \dots, a_m)}{\prod f^{\text{MVN}}_a(a_j)} 
+  \times \prod f_a(a_j)
+  \end{aligned}$
+
+* This is not a proper likelihood (won't integrate to 1).
+
+# Model evaluation criteria comparison
+
+Varying tuning parameter $\lambda$, can evaluate model with:
+
+* Sparsity
+
+* CV likelihood
+
+* AIC, BIC, [EBIC](https://www.stat.ubc.ca/~jhchen/paper/Bio08.pdf)
+
+```{r model evaluations, echo=FALSE, fig.width=4, fig.height=10}
+lfit_copulasso$df_eval %>%
+  dplyr::mutate(sparsity = df / nrow(mat_X_p) / (nrow(mat_X_p) - 1) * 2) %>%
   tidyr::gather(key = metric_name, value = metric,
                 negLogLik_CV, sparsity, AIC, BIC, EBIC) %>%
   ggplot(aes(x = lambda, y = metric)) +
   geom_point() + geom_line() +
   facet_wrap(.~metric_name, scales = "free_y", ncol = 1) +
   ggtitle("Copula lasso fits")
-fit_copulasso$df_eval %>% 
+lfit_copulasso$df_eval %>%
   tidyr::gather(key = metric_name, value = metric,
-                negLogLik_CV, AIC, BIC, EBIC) %>% 
-  dplyr::group_by(metric_name) %>% 
-  dplyr::arrange(metric) %>% 
-  dplyr::slice(1) %>% 
-  dplyr::ungroup() %>% 
+                negLogLik_CV, AIC, BIC, EBIC) %>%
+  dplyr::group_by(metric_name) %>%
+  dplyr::arrange(metric) %>%
+  dplyr::slice(1) %>%
+  dplyr::ungroup() %>%
   print()
-fit_gcodaPC$df_eval %>%
-  dplyr::mutate(sparsity = df / ncol(mat_X_p) / (ncol(mat_X_p) - 1) * 2) %>%
+lfit_gcoda$df_eval %>%
+  dplyr::mutate(sparsity = df / nrow(mat_X_p) / (nrow(mat_X_p) - 1) * 2) %>%
   tidyr::gather(key = metric_name, value = metric,
                 negLogLik_CV, sparsity, AIC, BIC, EBIC) %>%
   ggplot(aes(x = lambda, y = metric)) +
   geom_point() + geom_line() +
   facet_wrap(.~metric_name, scales = "free_y", ncol = 1) +
   ggtitle("gcoda fits with pseudo count = 0.5")
-fit_gcodaPC$df_eval %>% 
+lfit_gcoda$df_eval %>%
   tidyr::gather(key = metric_name, value = metric,
-                negLogLik_CV, AIC, BIC, EBIC) %>% 
-  dplyr::group_by(metric_name) %>% 
-  dplyr::arrange(metric) %>% 
-  dplyr::slice(1) %>% 
-  dplyr::ungroup() %>% 
-  print()
-fit_gcodaPV$df_eval %>%
-  dplyr::mutate(sparsity = df / ncol(mat_X_p) / (ncol(mat_X_p) - 1) * 2) %>%
-  tidyr::gather(key = metric_name, value = metric,
-                negLogLik_CV, sparsity, AIC, BIC, EBIC) %>%
-  ggplot(aes(x = lambda, y = metric)) +
-  geom_point() + geom_line() +
-  facet_wrap(.~metric_name, scales = "free_y", ncol = 1) +
-  ggtitle("gcoda fits with pseudo value = min non-zero/2")
-fit_gcodaPV$df_eval %>% 
-  tidyr::gather(key = metric_name, value = metric,
-                negLogLik_CV, AIC, BIC, EBIC) %>% 
-  dplyr::group_by(metric_name) %>% 
-  dplyr::arrange(metric) %>% 
-  dplyr::slice(1) %>% 
-  dplyr::ungroup() %>% 
+                negLogLik_CV, AIC, BIC, EBIC) %>%
+  dplyr::group_by(metric_name) %>%
+  dplyr::arrange(metric) %>%
+  dplyr::slice(1) %>%
+  dplyr::ungroup() %>%
   print()
 ```
