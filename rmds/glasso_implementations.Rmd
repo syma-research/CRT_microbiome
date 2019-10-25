@@ -17,8 +17,8 @@ set.seed(1)
 ```
 
 ```{r load data, include=FALSE}
-load("../data/genera_adj.RData")
-physeq <- physeq_genera_adj %>% 
+load("../data/genera.RData")
+physeq <- physeq_genera %>% 
   phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
   smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
 mat_X_count <- smar::otu_table2(physeq)
