@@ -6,6 +6,8 @@ plot_cors <- function(cor1, cor2, labels = c("cor1", "cor2")) {
     geom_point() +
     geom_abline(intercept = 0, slope = 1, color = "red") +
     xlab(labels[1]) + ylab(labels[2]) 
+  
+  return(p)
 }
 
 log_with_zero <- function(x, small_val = 1e-16) log10(x + small_val) 
