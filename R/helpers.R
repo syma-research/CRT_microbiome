@@ -107,3 +107,27 @@ enforce_symm <- function(x, method = "upper") {
   return(x_out)
 }
 
+simplify_feature <- function(x) {
+  mat_x <- Reduce("rbind", strsplit(x, "|", fixed = TRUE))
+  mat_x_ind <- gsub("NA", "", gsub(".*\\_\\_", "", mat_x)) != ""
+  x_simple <- vapply(
+    seq_along(x),
+    function(i) {
+      rev(mat_x[i, , drop = TRUE][mat_x_ind[i, , drop = TRUE]])[1]
+    },
+    "")
+  if(anyDuplicated(x_simple))
+    stop("Duplicates after simplifying!")
+  
+  return(x_simple)
+}
+
+longify_abd <- function(x, 
+                        feature = "feature", 
+                        sample = "sample",
+                        abundance = "abd") {
+  tb_long <- x %>% 
+    as.data.frame() %>% 
+    tibble::rownames_to_column(feature) %>% 
+    tidyr::gather(key = !!sample, value = !!abundance, -!!feature)
+}
