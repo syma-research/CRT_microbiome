@@ -141,11 +141,10 @@ negLogLik_gcoda <- function(S, Omega) {
   return(negLogLik)
 }
 
-mean_logisticMVN <- function(data) {
+get_mean_logisticMVN <- function(data) {
   if(any(data <= 0))
     stop("Data cannot have zeros!")
   
-  data <- log(data) - rowMeans(log(data))
-  mu <- apply(data, 2, mean)
+  mu <- apply(log10(mat_X_p_pseudocount), 1, mean)
   return(mu)
 }
