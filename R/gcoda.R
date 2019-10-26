@@ -145,6 +145,6 @@ get_mean_logisticMVN <- function(data) {
   if(any(data <= 0))
     stop("Data cannot have zeros!")
   
-  mu <- apply(log10(mat_X_p_pseudocount), 1, mean)
+  mu <- apply(log(mat_X_p_pseudocount), 1, mean)
   return(mu)
 }
