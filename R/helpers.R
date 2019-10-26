@@ -8,7 +8,7 @@ cor2 <- function(x, y = x,
                  random = TRUE, 
                  sim = FALSE,
                  R = 30,
-                 ncore = 6) {
+                 ncores = 6) {
   if(any(is.na(x)) | any(is.na(y)))
     stop("Missing values currently not supported!")
   if (nrow(x) != nrow(y)) 
@@ -46,7 +46,7 @@ cor2 <- function(x, y = x,
     minMeasure_y <- min(setdiff(y, 0))/2
     x_fill <- x
     y_fill <- y
-    doParallel::registerDoParallel(cores = ncore)
+    doParallel::registerDoParallel(cores = ncores)
     sum_cor <- foreach::`%dopar%`(
       foreach::foreach(r = seq_len(R),
                        .combine = "+"),
