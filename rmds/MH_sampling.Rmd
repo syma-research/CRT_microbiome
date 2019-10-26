@@ -1,0 +1,173 @@
+---
+title: "MH sampling debugging"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+  df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "../")
+```
+
+```{r setup2, include=FALSE}
+library(magrittr)
+library(ggplot2)
+set.seed(1)
+ncores <- 6
+```
+
+```{r load data, include=FALSE}
+load("../data/genera.RData")
+physeq <- physeq_genera %>% 
+  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
+  smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
+mat_X_count <- smar::otu_table2(physeq)
+rownames(mat_X_count) <- CRTmicrobiome:::simplify_feature(rownames(mat_X_count))
+mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
+df_marginals <- CRTmicrobiome:::get_marginals(t(mat_X_p))
+```
+
+```{r fit data, include=FALSE}
+fit_copulasso <- CRTmicrobiome:::copulasso(
+  data = t(mat_X_p),
+  lambda_list = 0.19)$fits[[1]]
+params_copulasso <- list(mu = df_marginals$mu,
+                         sigma = df_marginals$sigma,
+                         pi = 1 - df_marginals$pi,
+                         Omega = fit_copulasso)
+
+mat_X_p_pseudocount <- apply(mat_X_count + 0.5, 2, function(x) x / sum(x))
+mu_a <- CRTmicrobiome:::get_mean_logisticMVN(mat_X_p_pseudocount)
+fit_gcoda <- CRTmicrobiome:::gcoda(
+  data = t(mat_X_p_pseudocount),
+  lambda_list = 0.6)$fits[[1]]
+params_gcoda <- list(mu = mu_a,
+                     Omega = fit_gcoda)
+```
+
+# Agenda
+
+* gcoda (logistic-MVN) has high density for when $p_j$ is close to one,
+  and $p_{-j}$ are close to zero
+  
+  * $\log f(\log p) = (\log x - \mu)^\prime \tilde{\Omega} (\log x - \mu) -
+    \sum \log p$
+  
+* copulasso (ZI marginal x copula) has discrete component, so what should
+  proposal look like?
+
+```{r old MCMC for gcoda, echo=FALSE}
+index <- rownames(mat_X_count) == "f__Enterobacteriaceae"
+dir.create("../results/MCMC/gcoda/", recursive = TRUE, showWarnings = FALSE)
+R <- 1000
+doParallel:::registerDoParallel(cores = ncores)
+ll_ps <- foreach::`%dopar%`(
+  foreach::foreach(i_sample = seq_len(ncol(mat_X_p_pseudocount))),
+  {
+    l_samples <-
+      CRTmicrobiome:::mcmc_gcoda(
+        p = mat_X_p_pseudocount[, i_sample, drop = TRUE],
+        index = index,
+        params = params_gcoda,
+        R = R)
+    return(l_samples)
+  }
+)
+doParallel::stopImplicitCluster()
+# save(ll_ps, file = "../results/MCMC/gcoda/samples_old.RData")
+load("../results/MCMC/gcoda/samples_old.RData")
+
+l_acfs <- ll_ps %>% 
+  purrr::map(~.x %>% 
+               purrr::map_dbl(~.x$logp["f__Enterobacteriaceae"]) %>% 
+               acf(plot = FALSE) %>% 
+               extract2("acf") %>% 
+               `[`(, 1, 1)) 
+l_acfs %>% 
+  purrr::imap_dfr(
+    ~ data.frame(acf = .x,
+                 lag = seq_along(.x),
+                 sample = .y)
+  ) %>% 
+  ggplot(aes(x = lag, y = acf, group = sample)) +
+  geom_point() + geom_line()
+
+ll_ps %>% 
+  purrr::map(~.x %>% 
+               purrr::map() %>% 
+               purrr::reduce(c) %>% 
+               mean) %>% 
+  purrr::reduce(c) %>% mean()
+
+rm(ll_ps)
+# mat_test <- ll_ps %>% 
+#   purrr::map(~.x[[500]]$logp) %>% 
+#   purrr::reduce(cbind) %>% 
+#   exp()
+# colnames(mat_test) <- paste0(colnames(mat_X_p_pseudocount), "_new")
+# df_test <- data.frame(sample = rep(c("original", "new"), 
+#                                    each = ncol(mat_X_p)),
+#                       filler = 1)
+# rownames(df_test) <- c(colnames(mat_X_p_pseudocount), 
+#                        colnames(mat_test))
+# physeq_test <- phyloseq::phyloseq(
+#   phyloseq::otu_table(cbind(mat_X_p_pseudocount, mat_test), 
+#                       taxa_are_rows = TRUE),
+#   phyloseq::sample_data(df_test)
+# )
+# physeq_test %>% 
+#   phyloseq::ordinate(method = "MDS") %>% 
+#   phyloseq::plot_ordination(physeq_test, ., color = "sample")
+```
+
+```{r old MCMC for copulasso, echo=FALSE}
+dir.create("../results/MCMC/copulasso/", recursive = TRUE, showWarnings = FALSE)
+R <- 10000
+# doParallel:::registerDoParallel(cores = ncores)
+# ll_ps <- foreach::`%dopar%`(
+#   foreach::foreach(i_sample = seq_len(ncol(mat_X_p))),
+#   {
+# l_samples <-
+#   CRTmicrobiome:::mcmc_copulasso(p = mat_X_p[, i_sample, drop = TRUE],
+#                                  index = index,
+#                                  params = params_copulasso,
+#                                  R = 1000)
+#     return(l_samples %>%
+#              purrr::map(~.x[c("accept", "g", "p")]))
+#   }
+# )
+# doParallel::stopImplicitCluster()
+# save(ll_ps, file = "../results/MCMC/copulasso/samples_old.RData")
+load("../results/MCMC/copulasso/samples_old.RData")
+# ll_ps[[4]] %>% 
+#   purrr::map_dbl(~.x[["p"]][index]) %>% 
+#   plot(1:R, .)
+# ll_ps %>% 
+#   purrr::map_dbl(~.x %>% 
+#                    purrr::map_lgl("accept") %>% 
+#                    mean()) %>% 
+#   data.frame(acceptance = .) %>% 
+#   ggplot(aes(x = acceptance)) +
+#   geom_histogram() 
+ll_ps[[1]] %>%
+  purrr::map_dbl(~.x$p["f__Enterobacteriaceae"]) %>%
+  plot(seq_along(ll_ps[[1]]), .)
+# ll_ps[[1]] %>%
+#   purrr::map_dbl(~.x$g[index]) %>%
+#   plot(seq_along(ll_ps[[1]]), .)
+# mat_test <- ll_ps %>% 
+#   purrr::map(~.x[[5000]]$p) %>% 
+#   purrr::reduce(cbind)
+# colnames(mat_test) <- paste0(colnames(mat_X_p), "_new")
+# df_test <- data.frame(sample = rep(c("original", "new"), each = ncol(mat_X_p)),
+#                       filler = 1)
+# rownames(df_test) <- c(colnames(mat_X_p), colnames(mat_test))
+# physeq_test <- phyloseq::phyloseq(
+#   phyloseq::otu_table(cbind(mat_X_p, mat_test), taxa_are_rows = TRUE),
+#   phyloseq::sample_data(df_test)
+# )
+# physeq_test %>% 
+#   phyloseq::ordinate(method = "MDS") %>% 
+#   phyloseq::plot_ordination(physeq_test, ., color = "sample")
+```
