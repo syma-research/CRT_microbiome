@@ -77,7 +77,7 @@ Analyzed one of the gut microbiome cohorts in my meta-analysis project. ~100
 samples and features post filtering. First load data and estimate the parameters.
 
 ```{r SparseDOSSA fits}
-load("data/genera_adj.RData")
+load("data/genera.RData")
 physeq <- physeq_genera %>% 
   phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
   smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
