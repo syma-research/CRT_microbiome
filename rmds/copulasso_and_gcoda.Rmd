@@ -19,8 +19,7 @@ set.seed(1)
 ```{r load data, include=FALSE}
 load("../data/genera.RData")
 physeq <- physeq_genera %>% 
-  phyloseq::subset_samples(dataset_name == "PROTECT") %>% 
-  phyloseq::subset_samples(disease == "UC" & sample_type == "stool") %>% 
+  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
   smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
 mat_X_count <- smar::otu_table2(physeq)
 rownames(mat_X_count) <- CRTmicrobiome:::simplify_feature(rownames(mat_X_count))
@@ -73,7 +72,7 @@ lfit_copulasso <- CRTmicrobiome:::copulasso(
   data = t(mat_X_p),
   lambda_list = seq(0.01, 0.4,
                     by = 0.01),
-  K_CV = 10)
+  K_CV = 5)
 fit_copulasso <-
   lfit_copulasso$fits[[order(lfit_copulasso$df_eval$BIC)[1]]]
 
@@ -82,7 +81,7 @@ lfit_gcoda <- CRTmicrobiome:::gcoda(
   data = t(mat_X_p_pseudocount),
   lambda_list = seq(0.02, 0.9,
                     by = 0.02),
-  K_CV = 10)
+  K_CV = 5)
 fit_gcoda <-
   lfit_gcoda$fits[[order(lfit_gcoda$df_eval$BIC)[1]]]
 ```
@@ -218,8 +217,8 @@ df_p_gcoda %>%
       $\text{cov} (\log \tilde{p}_i, \log \tilde{p}_j)$
     
     * Original covariance estimated as 
-      $\rho^{-1} (\text{spearman} (p_i, p_j)) * \text{sd} (\log \tilde{p}_i) * $
-      $\text{sd} (\log \tilde{p}_j)$
+      $\rho^{-1} (\text{spearman} (p_i, p_j)) * \text{sd} (\log \tilde{p}_i) * 
+      \text{sd} (\log \tilde{p}_j)$
   
   * Low abundant features' proportions dominated by highly 
     abundant and variable features, thus vary together.
@@ -243,10 +242,10 @@ cov_gcoda <- log(samples_gcoda) %>% t() %>%
 p_copulaso <- CRTmicrobiome:::plot_cors(rho_original, rho_copulaso,
                                         c("original", "copulaso")) +
   ggtitle("Spearman correlation of copulaso p")
-p_copulaso_renorm <- CRTmicrobiome:::plot_cors(rho_original, rho_copulaso,
-                                        c("original", "copulaso")) +
+p_copulaso_renorm <- CRTmicrobiome:::plot_cors(rho_original, 
+                                               rho_copulaso_renorm,
+                                               c("original", "copulaso")) +
   ggtitle("Spearman correlation of copulaso p (renormed)")
-
 p_pseudo <- CRTmicrobiome:::plot_cors(cov_original, cov_pseudo,
                                         c("original", "with pseudo count")) +
   ggtitle("Covariance of log p")
@@ -265,6 +264,7 @@ Can use ZI marginals to model $f_a(a_j)$ instead?
 * Original likelihood is $f_a^{\text{MVN}}(a_1, \dots, a_m)$
 
 * Write new likelihood as
+  
   $\begin{aligned}
   f_a(a_1, \dots, a_m) 
   &= \frac{f_a(a_1, \dots, a_m)}{\prod f_a(a_j)} \times \prod f_a(a_j) \\
