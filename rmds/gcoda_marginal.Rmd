@@ -1,0 +1,76 @@
+---
+title: "Test gcoda-marginal model"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "../")
+```
+
+```{r setup2, include=FALSE}
+library(magrittr)
+library(ggplot2)
+set.seed(1)
+ncores <- 6
+```
+
+```{r load data, include=FALSE}
+load("../data/genera.RData")
+physeq <- physeq_genera %>% 
+  phyloseq::subset_samples(dataset_name == "MucosalIBD") %>% 
+  smar::prune_taxaSamples(flist_taxa = genefilter::kOverA(k = 5, A = 1))
+mat_X_count <- smar::otu_table2(physeq)
+rownames(mat_X_count) <- CRTmicrobiome:::simplify_feature(rownames(mat_X_count))
+mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
+df_marginal <- CRTmicrobiome:::get_marginal(t(mat_X_p))
+```
+
+```{r fit data, include=FALSE}
+mat_X_p_pseudocount <- apply(mat_X_count + 0.5, 2, function(x) x / sum(x))
+mu_a <- CRTmicrobiome:::get_mean_logisticMVN(mat_X_p_pseudocount)
+fit_gcoda <- CRTmicrobiome:::gcoda(
+  data = t(mat_X_p_pseudocount),
+  lambda_list = 0.6)$fits[[1]]
+params_gcoda <- list(mu = mu_a,
+                     Omega = fit_gcoda)
+```
+
+Seems that penalization gives higher estimation features' variances.
+```{r check variance change, echo=FALSE}
+tb_sd <- tibble::tibble(
+  original = mat_X_p_pseudocount %>% 
+    log() %>% t() %>% var() %>% diag() %>% sqrt(),
+  estimated = diag(solve(fit_gcoda)) %>% sqrt()
+)
+tb_sd %>% 
+  ggplot(aes(x = original, y = estimated)) +
+  geom_point() + 
+  geom_abline(intercept = 0, slope = 1, color = "red") 
+```
+
+```{r fit, sample from, and compare marginal univariate normal mixtures}
+df_marginal_mix <- 
+  CRTmicrobiome:::get_marginal_mix(data = t(mat_X_p_pseudocount),
+                                   df_marginal = df_marginal,
+                                   mean0 = log(0.5) - 
+                                     mean(log(apply(mat_X_count, 2, sum))),
+                                   var0 = var(log(apply(mat_X_count, 2, sum))))
+sds_gcoda <- sqrt(diag(solve(fit_gcoda)))
+sd0 <- df_marginal_mix$sigma0 / 
+  df_marginal_mix$sigma_overall * 
+  sds_gcoda
+sd1 <- df_marginal_mix$sigma1 / 
+  df_marginal_mix$sigma_overall * 
+  sds_gcoda
+sigma <- solve(fit_gcoda) * 
+  1/sds_gcoda * 
+  1/rep(sds_gcoda, each = nrow(fit_gcoda))
+samples_gcoda <- CRTmicrobiome:::rgcoda(n = 1000,
+                                        mean0 = df_marginal_mix$mu0,
+                                        mean1 = df_marginal_mix$mu1,
+                                        sd0 = sd0, sd1 = sd1,
+                                        pi = df_marginal_mix$pi,
+                                        sigma = sigma)
+```

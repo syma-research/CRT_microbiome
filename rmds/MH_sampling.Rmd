@@ -25,16 +25,16 @@ physeq <- physeq_genera %>%
 mat_X_count <- smar::otu_table2(physeq)
 rownames(mat_X_count) <- CRTmicrobiome:::simplify_feature(rownames(mat_X_count))
 mat_X_p <- apply(mat_X_count, 2, function(x) x / sum(x))
-df_marginals <- CRTmicrobiome:::get_marginals(t(mat_X_p))
+df_marginal <- CRTmicrobiome:::get_marginal(t(mat_X_p))
 ```
 
 ```{r fit data, include=FALSE}
 fit_copulasso <- CRTmicrobiome:::copulasso(
   data = t(mat_X_p),
   lambda_list = 0.19)$fits[[1]]
-params_copulasso <- list(mu = df_marginals$mu,
-                         sigma = df_marginals$sigma,
-                         pi = 1 - df_marginals$pi,
+params_copulasso <- list(mu = df_marginal$mu,
+                         sigma = df_marginal$sigma,
+                         pi = 1 - df_marginal$pi,
                          Omega = fit_copulasso)
 
 mat_X_p_pseudocount <- apply(mat_X_count + 0.5, 2, function(x) x / sum(x))

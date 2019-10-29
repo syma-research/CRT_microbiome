@@ -62,3 +62,48 @@ rZILogitN_one <- function(n, mean, sd, pi) {
   return(expit(rnorm(n = n, mean = mean, sd = sd)) *
            rbinom(n = n, size = 1, prob = pi))
 }
+
+rgcoda <- function(n, mean0, mean1, sd0, sd1, pi, sigma) {
+  if(length(mean0) != length(mean1) |
+     length(mean0) != length(sd0) |
+     length(mean0) != length(sd1) |
+     length(mean0) != length(pi) |
+     length(mean0) != nrow(sigma)
+  )
+    stop("Parameter dimensions must agree!")
+  
+  # sample marginals
+  mat_marginals <- 
+    vapply(seq_len(length(mean0)),
+           function(i)
+             rMixLogN_one(n = n,
+                          mean0 = mean0[i], mean1 = mean1[i],
+                          sd0 = sd0[i], sd1 = sd1[i],
+                          pi = pi[i]),
+           rep(0.0, n))
+  # arrange from smallest to largest for shuffling
+  mat_marginals <- 
+    apply(mat_marginals, 2, function(x) x[order(x)])
+  
+  # sample ranks
+  mat_rank <- 
+    mvtnorm::rmvnorm(n = n, sigma = sigma)
+  mat_rank <- apply(mat_rank, 2, rank)
+  
+  mat_samples <- 
+    vapply(seq_len(length(mean0)),
+           function(i)
+             mat_marginals[, i, drop = TRUE][mat_rank[, i, drop = TRUE]],
+           rep(0.0, n))
+  
+  
+  mat_samples <- t(apply(mat_samples, 1, function(x) x / sum(x)))
+  
+  return(mat_samples)
+}
+
+rMixLogN_one <- function(n, mean0, mean1, sd0, sd1, pi) {
+  ind <- rbinom(n = n, size = 1, prob = pi)
+  return(exp(rnorm(n = n, mean = mean0, sd = sd0) * (1 - ind) +
+               rnorm(n = n, mean = mean1, sd = sd1) * ind))
+}
