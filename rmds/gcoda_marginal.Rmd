@@ -51,6 +51,9 @@ tb_sd %>%
 ```
 
 ```{r fit, sample from, and compare marginal univariate normal mixtures}
+dir.create("../results/gcoda_marginal/", 
+           recursive = TRUE, showWarnings = FALSE)
+R <- 10000
 df_marginal_mix <- 
   CRTmicrobiome:::get_marginal_mix(data = t(mat_X_p_pseudocount),
                                    df_marginal = df_marginal,
@@ -64,13 +67,67 @@ sd0 <- df_marginal_mix$sigma0 /
 sd1 <- df_marginal_mix$sigma1 / 
   df_marginal_mix$sigma_overall * 
   sds_gcoda
-sigma <- solve(fit_gcoda) * 
-  1/sds_gcoda * 
-  1/rep(sds_gcoda, each = nrow(fit_gcoda))
-samples_gcoda <- CRTmicrobiome:::rgcoda(n = 1000,
+samples_gcoda <- CRTmicrobiome:::rgcoda(n = R,
                                         mean0 = df_marginal_mix$mu0,
                                         mean1 = df_marginal_mix$mu1,
                                         sd0 = sd0, sd1 = sd1,
                                         pi = df_marginal_mix$pi,
-                                        sigma = sigma)
+                                        sigma = solve(fit_gcoda))
+cov_samples <- cov(samples_gcoda)
+p_original <- 
+  CRTmicrobiome:::plot_cors(cov(t(log(mat_X_p_pseudocount))), 
+                            solve(fit_gcoda),
+                            labels = c("Data", "Fit"))
+p_sample <- 
+  CRTmicrobiome:::plot_cors(cov(t(log(samples_gcoda$abd))), 
+                                      solve(fit_gcoda),
+                            labels = c("Sample", "Fit"))
+cowplot::plot_grid(p_original, p_sample, nrow = 1) %>% 
+  ggsave("../results/gcoda_marginal/cov_comparison.pdf",
+         .,
+         width = 10, height = 5)
+
+df_original <- mat_X_p_pseudocount %>%
+  CRTmicrobiome:::longify_abd() %>% 
+  dplyr::left_join(
+    (mat_X_count != 0) %>% 
+      CRTmicrobiome:::longify_abd(abundance = "is_pos"),
+    by = c("feature", "sample")
+  ) %>% 
+  dplyr::mutate(data = "original")
+
+dimnames(samples_gcoda$abd) <- 
+  dimnames(samples_gcoda$ind) <- 
+  list(rownames(mat_X_count),
+       paste0("sample", seq_len(R)))
+df_gcoda <- samples_gcoda$abd %>%
+  CRTmicrobiome:::longify_abd() %>%
+  dplyr::left_join(
+    (samples_gcoda$ind == 1) %>% 
+      CRTmicrobiome:::longify_abd(abundance = "is_pos"),
+    by = c("feature", "sample")
+  ) %>% 
+  dplyr::mutate(data = "gcoda")
+df_p_gcoda <- rbind(df_original,
+                    df_gcoda) %>%
+  dplyr::mutate(
+    data = factor(data, levels = c("original", "gcoda")),
+    log_abd = log10(abd)) %>%
+  dplyr::group_by(feature) %>%
+  dplyr::summarise(
+    l_p = list(
+      data.frame(log_abd = log_abd,
+                 data = data,
+                 is_pos = is_pos) %>%
+        ggplot(aes(x = log_abd, fill = is_pos)) +
+        geom_histogram(bins = 50) +
+        facet_grid(data~., scales = "free_y") +
+        scale_fill_manual(values = c("FALSE" = "grey", "TRUE" = "black")) +
+        ggtitle(feature[1])
+    ))
+pdf("../results/gcoda_marginal/marginal_gcoda.pdf",
+    width = 4, height = 8)
+for(i in seq_len(nrow(df_p_gcoda)))
+  print(df_p_gcoda$l_p[[i]])
+dev.off()
 ```
