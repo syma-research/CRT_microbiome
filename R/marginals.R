@@ -37,8 +37,8 @@ get_marginal_mix <- function(data, df_marginal = get_marginal(data),
                fit_EM_mix <- mixtools::normalmixEM2comp(
                  x = log(data[, i, drop = TRUE]),
                  lambda = 0.5,
-                 mu = c(mean0, df_marginals$mu[i]),
-                 sigsqrd = c(var0, (df_marginals$sigma[i])^2),
+                 mu = c(mean0, df_marginal$mu[i]),
+                 sigsqrd = c(var0, (df_marginal$sigma[i])^2),
                  verb = FALSE))
              if(fit_EM_mix$mu[1] > fit_EM_mix$mu[2])
                stop("Something went wrong!")

@@ -53,7 +53,7 @@ rcopulasso <- function(n, mean, sd, pi, sigma, norm = TRUE) {
            rep(0.0, n))
   
   if(norm)
-    mat_samples <- t(apply(mat_samples, 1, function(x) x / sum(x)))
+    mat_samples <- t(apply(mat_samples, 2, function(x) x / sum(x)))
   
   return(mat_samples)
 }
@@ -97,7 +97,7 @@ rgcoda <- function(n, mean0, mean1, sd0, sd1, pi, sigma) {
            rep(0.0, n))
   
   
-  mat_samples <- t(apply(mat_samples, 1, function(x) x / sum(x)))
+  mat_samples <- t(apply(mat_samples, 2, function(x) x / sum(x)))
   
   return(mat_samples)
 }
