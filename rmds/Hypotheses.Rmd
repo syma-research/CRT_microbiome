@@ -1,0 +1,34 @@
+---
+title: Hypotheses
+author: "Siyuan Ma"
+date: "11/2/2019"
+output: html_document
+---
+
+$Y$ is outcome and $A = (A_1, A_2, \dots, A_p)$ are absolute abundances. 
+Let $S, V \subset \{1, 2, \dots, p\}, S \cap V = \emptyset$. Let
+$A_S$ be the joint of all $A_j$, $j \in S$ and $A_V$ the joint of all $A_{j^\prime}$, 
+$j^\prime \in V$. $||\cdot||_1$ is the $L_1$ norm, 
+i.e. total sum of abundances. Consider three null hypotheses:
+
+1. $Y \perp (A_V, ||A||_1) | \frac{A_S}{||A_S||_1}$
+
+2. $Y \perp A_V | \frac{A_S}{||A_S||_1}$
+
+3. $Y \perp \frac{A_V}{||A||_1} | \frac{A_S}{||A_S||_1}$
+
+Comments:
+
+* $1 \Rightarrow 2$, $1 \Rightarrow 3$. $2 \not\Rightarrow 3$, 
+  $3 \not\Rightarrow 2$.
+
+* It is not difficult to imagine distributions where 1 holds, and consequently, 
+  both 2 and 3. For this, simply imagine the generative model where $Y$ is sampled
+  purely based on $\frac{A_S}{||A_S||_1}$ (i.e., your example). 
+
+* Only 3 is testable with observed data. Based on 3, implied hypotheses can also
+  be raised. For example, $Y \perp \frac{A_V}{||A_V||_1} | \frac{A_S}{||A_S||_1}$,
+  or $Y \perp \frac{A_j}{||A||_1} | \frac{A_S}{||A_S||_1}$ for a specific $j$.
+
+* Our proposal is the special case where $V = \{j\}$ and $S = \{-j\}$.
+
