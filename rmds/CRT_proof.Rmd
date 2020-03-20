@@ -1,0 +1,213 @@
+---
+title: "One parameter setting for proof of concept CRT"
+author: "Siyuan Ma"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "../", echo=FALSE)
+library(magrittr)
+library(ggplot2)
+```
+
+```{r steup2, include=FALSE}
+dir_output <- "../results/CRT_proof/"
+dir.create(dir_output, recursive = TRUE)
+source("R/sample_CR.R")
+future::plan(future::multisession)
+```
+
+* Setup
+  
+  * $X$: $p = 20, n = 100$. Params taken as top 20 abundant features in a stool fit. 5 random duplicates.
+  
+  * $Y\sim \text{Bernoulli}$. $\text{logit E}Y =\frac{X_6}{X_6 + X_{14}} + 2 * \frac{X_{14}}{X_6 + X_{14}}$, $\Rightarrow$ $X_6$, $X_{14}$ are TPs, rest are null. (They are the top and 11th most abundant features).
+    
+  * CRT: $m = 100$ random samples, step size $= 10$ during MCMC sampling. "Serial" sampling scheme.
+  
+  * Model: CV glm lasso. Variables are the feature being tested, and renormalized version of the rest.
+  
+* Results:
+```{r simulate datasets, include=FALSE}
+# R <- 5
+# load("../data/params_export.RData")
+# set.seed(1)
+# tb_sim <- tibble::tibble(
+#   params_a = list(params),
+#   params_x = list(params %>% 
+#                     SparseDOSSA2:::params_a_to_x()),
+#   n = 100,
+#   R = 1:R,
+# ) %>% 
+#   dplyr::mutate(i_sim = seq_len(dplyr::n())) %>%
+#   dplyr::group_by(i_sim) %>%
+#   dplyr::mutate(a_samples =
+#                   SparseDOSSA2:::simulate_a(n = n, params = params_a[[1]]) %>%
+#                   list(),
+#                 x_samples =
+#                   t(apply(a_samples[[1]], 1, function(x) x / sum(x))) %>%
+#                   list()
+#   ) %>%
+#   dplyr::ungroup()
+```
+
+```{r simulate y, include = FALSE}
+# tb_sim <- 
+#   tb_sim %>% 
+#   dplyr::group_by(R) %>% 
+#   dplyr::mutate(covariates = x_samples[[1]][, features_TP] %>% 
+#                   apply(1, MMUPHin:::TSS) %>% 
+#                   t() %>% 
+#                   apply(2, function(x) (x - mean(x)) / sd(x)) %>% 
+#                   list(),
+#                 prob = (covariates[[1]] %*% c(1, 2)) %>% 
+#                   as.vector() %>% 
+#                   SparseDOSSA2:::expit() %>% 
+#                   list()) %>% 
+#   dplyr::mutate(y = rbinom(
+#     n = nrow(x_samples[[1]]),
+#     size = 1,
+#     prob = prob[[1]]
+#   ) %>% 
+#     list())
+# save(tb_sim, file = paste0(dir_output, "tb_sim.RData"))
+load(paste0(dir_output, "tb_sim.RData"))
+features_TP <- tibble::tibble(
+  mean = (1 - tb_sim$params_x[[1]]$pi0) * exp(tb_sim$params_x[[1]]$mu)
+) %>%
+  dplyr::mutate(feature = seq_len(dplyr::n())) %>%
+  dplyr::arrange(-mean) %>%
+  {.[c(1, 11), ]$feature}
+features_FP <- tibble::tibble(
+  mean = (1 - tb_sim$params_x[[1]]$pi0) * exp(tb_sim$params_x[[1]]$mu)
+) %>%
+  dplyr::mutate(feature = seq_len(dplyr::n())) %>%
+  dplyr::arrange(-mean) %>%
+  {.[c(2, 12), ]$feature}
+```
+
+```{r CRT sampling, echo=FALSE}
+# for(r in tb_sim$R) {
+#   for(i_feature in c(features_TP, features_FP))
+#   {
+#     samples_for_testing <- 
+#       sample_CR(data = tb_sim$x_samples[[r]],
+#                 ind_feature = seq_len(20) == i_feature,
+#                 params_a = tb_sim$params_a[[r]],
+#                 params_x = tb_sim$params_x[[r]],
+#                 m = 100, space_size = 10,
+#                 debug_dir = paste0(dir_output, "samples_CR_",
+#                                    r, "_", i_feature, ".RData"))
+#     save(samples_for_testing,
+#          file = paste0(dir_output, "samples_for_testing_",
+#                        r, "_", i_feature, ".RData"))
+#   }
+# }
+```
+
+```{r sanity check, echo=FALSE}
+# mat_otu <- rbind(tb_sim$x_samples[[r]],
+#                  samples_for_testing[1:5] %>% 
+#                    purrr::reduce(rbind)) %>% 
+#   t()
+# metadata <- data.frame(filler = 1,
+#                        dataset = rep(0:5,
+#                                        each = nrow(tb_sim$x_samples[[r]])))
+# physeq <- phyloseq::phyloseq(
+#   otu_table = phyloseq::otu_table(mat_otu, taxa_are_rows = TRUE),
+#   sample_data = metadata
+# )
+# ordination <- phyloseq::ordinate(physeq, method = "MDS")
+# phyloseq::plot_ordination(physeq, ordination, color = "dataset")
+```
+
+
+```{r CRT fitting, echo=FALSE}
+# for(i_feature in c(features_TP, features_FP)) {
+#   ind_feature <- seq_len(20) == i_feature
+#   for(r in tb_sim$R) {
+#     fit_original_data <- glmnet::cv.glmnet(x = cbind(tb_sim$x_samples[[r]][, ind_feature],
+#                                                      tb_sim$x_samples[[r]][, !ind_feature] %>% 
+#                                                        apply(1, MMUPHin:::TSS) %>% 
+#                                                        t()) %>% 
+#                                              apply(2, function(x) (x - mean(x)) / sd(x)),
+#                                            y = tb_sim$y[[r]],
+#                                            family = "binomial")
+#     load(paste0(dir_output, "samples_for_testing_",
+#                 r, "_", i_feature, ".RData"))
+#     l_fit_random_data <- (1:100) %>% 
+#       future.apply::future_lapply(
+#         function(i_dataset)
+#           glmnet::cv.glmnet(x = cbind(samples_for_testing[[i_dataset]][, ind_feature],
+#                                       samples_for_testing[[i_dataset]][, !ind_feature] %>% 
+#                                         apply(1, MMUPHin:::TSS) %>% 
+#                                         t()) %>% 
+#                               apply(2, function(x) (x - mean(x)) / sd(x)),
+#                             y = tb_sim$y[[r]],
+#                             family = "binomial")
+#       )
+#     result_CRT <- list(fit_original_data = fit_original_data,
+#                        l_fit_random_data = l_fit_random_data)
+#     save(result_CRT, file = paste0(dir_output, "result_CRT_", r, "_",
+#                                    i_feature, ".RData"))
+#   }
+# }
+```
+
+```{r summarize, echo=FALSE}
+extract_p <- function(result, s = "lambda.min") {
+  beta_data <- glmnet:::coef.cv.glmnet(result$fit_original_data, s = s)[2]
+  beta_CR <- vapply(result$l_fit_random_data,
+                    function(i_result)
+                      glmnet:::coef.cv.glmnet(i_result, s = s)[2],
+                    0.0)
+  list(p = 1 - mean(abs(beta_data) > abs(beta_CR)),
+       beta_data = beta_data,
+       beta_CR = beta_CR)
+}
+tb_summary <- tidyr::expand_grid(
+  feature = c(features_TP, features_FP),
+  R = tb_sim$R) %>%
+  dplyr::mutate(i_result = seq_len(dplyr::n())) %>%
+  dplyr::left_join(
+    tb_sim, by = "R"
+  ) %>%
+  dplyr::group_by(i_result) %>%
+  dplyr::mutate(result = {
+    load(paste0(dir_output, "result_CRT_", R, "_",
+                feature, ".RData"))
+    result_CRT %>% list()
+  }) %>%
+  dplyr::ungroup()
+#
+tb_summary <- tb_summary %>%
+  dplyr::mutate(
+    summary_min =
+      result %>% purrr::map(extract_p, s = "lambda.min"),
+    summary_1se =
+      result %>% purrr::map(extract_p, s = "lambda.1se")
+  ) %>%
+  dplyr::mutate(
+    p_min = summary_min %>%
+      purrr::map_dbl("p"),
+    p_1se = summary_1se %>%
+      purrr::map_dbl("p")
+  )
+
+tb_summary %>%
+  dplyr::mutate(TP = feature %in% features_TP) %>%
+  dplyr::mutate(feature = factor(feature, levels = c(features_TP, features_FP))) %>%
+  tidyr::pivot_longer(cols = c(p_min, p_1se),
+                      names_to = "criteria",
+                      values_to = "p_CRT") %>%
+  ggplot(aes(x = feature, y = p_CRT, color = criteria,
+             shape = TP)) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.25), size = 3)
+```
+
+* The CRT scheme does not require features to be normalized, but the fitting model might?
+
+* Zero-inflatedness of features can impact performance, and sampling efficiency.
+
+* Model (both $X$ and $Y$) misspecification?

@@ -129,5 +129,6 @@ longify_abd <- function(x,
   tb_long <- x %>% 
     as.data.frame() %>% 
     tibble::rownames_to_column(feature) %>% 
-    tidyr::gather(key = !!sample, value = !!abundance, -!!feature)
+    tidyr::pivot_longer(-tidyselect::contains(feature), 
+                        names_to = sample, values_to = abundance)
 }
