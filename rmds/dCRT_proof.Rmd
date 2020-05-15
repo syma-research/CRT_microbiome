@@ -1,0 +1,117 @@
+---
+title: "Distilled CRT simulation proof of concept"
+author: "Siyuan Ma"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/n/janson_lab/lab/sma/CRT_microbiome/", 
+                     echo=FALSE)
+library(magrittr)
+library(ggplot2)
+```
+
+## Distilled CRT
+* Goal: test for $Y \perp X_j | \frac{X_{-j}}{\sum X_{-j}}$
+* Full CRT
+    * Resample $X_j^r$ based on $X_j | \frac{X_{-j}}{\sum X_{-j}}$
+    * Fit $Y \sim X_j, \frac{X_{-j}}{\sum X_{-j}}$ and 
+      $Y \sim X_j^r, \frac{X_{-j}}{\sum X_{-j}}$. The latter provide null
+      distribution.
+* Distilled CRT
+    * Fit $Y \sim \frac{X_{-j}}{\sum X_{-j}}$ to obtain 
+      $\hat{Y} = \hat{E} Y|\frac{X_{-j}}{\sum X_{-j}}$
+    * Resample $X_j^r$ based on $X_j | \frac{X_{-j}}{\sum X_{-j}}$
+    * Fit $Y - \hat{Y} \sim X_j$ and 
+      $Y - \hat{Y} \sim X_j^r$. 
+      The latter provide null distribution.
+
+```{r summarize results, echo=FALSE}
+dir_output <- "/n/janson_lab/lab/sma/CRT_microbiome/results/dCRT_proof/"
+batchtools::loadRegistry(file.dir = "r_batchtools_reg/dCRT_proof/", writeable = FALSE)
+load(file = paste0(dir_output, "tb_job_testing.RData"))
+
+extract_p <- function(result) {
+  beta_data <- result$fit_original_data$coef[2]
+  beta_CR <- vapply(result$l_fit_random_data,
+                    function(i_result)
+                      i_result$coef[2],
+                    0.0)
+  list(p = 1 - mean(abs(beta_data) > abs(beta_CR), na.rm = TRUE),
+       beta_data = beta_data,
+       beta_CR = beta_CR)
+}
+# 
+# tb_result <- tb_job %>%
+#   dplyr::filter(i_job %in% batchtools::findDone()$job.id)
+# 
+# l_results <- list()
+# l_summary <- list()
+# for(i_row in seq_len(nrow(tb_result))) {
+#   if(i_row %% 20 == 0) print(i_row)
+#   load(paste0(dir_output, "fit_", tb_result$i_job[i_row], ".RData"))
+#   l_results[[i_row]] <- result_CRT
+#   l_summary[[i_row]] <- extract_p(result_CRT)
+# }
+
+# tb_result <-  tb_result %>%
+#   dplyr::mutate(
+#     summary = l_summary
+#   ) %>%
+#   dplyr::mutate(
+#     p = summary %>%
+#       purrr::map_dbl("p")
+#   )
+# save(tb_result, file = paste0(dir_output, "tb_result.RData"))
+load(paste0(dir_output, "tb_result.RData"))
+tb_result_distilled <- tb_result
+load("results/CRT_simulation/tb_result.RData")
+tb_result <- rbind(
+  tb_result %>%
+    dplyr::rename(p = p_min,
+                     summary = summary_min) %>% 
+    dplyr::mutate(method = "full") %>% 
+    dplyr::select(-p_1se, -summary_1se),
+  tb_result_distilled %>% 
+    dplyr::mutate(method = "distilled")
+) %>% 
+  dplyr::mutate(method = factor(method, levels = c("distilled", "full")))
+```
+
+
+```{r summarize, echo=FALSE}
+features_TP <- tibble::tibble(
+  mean = (1 - tb_result$params_x[[1]]$pi0) * exp(tb_result$params_x[[1]]$mu)
+) %>%
+  dplyr::mutate(feature = seq_len(dplyr::n())) %>%
+  dplyr::arrange(-mean) %>%
+  {.[c(1, 11), ]$feature}
+features_FP <- tibble::tibble(
+  mean = (1 - tb_result$params_x[[1]]$pi0) * exp(tb_result$params_x[[1]]$mu)
+) %>%
+  dplyr::mutate(feature = seq_len(dplyr::n())) %>%
+  dplyr::arrange(-mean) %>%
+  {.[c(2, 12), ]$feature}
+
+tb_result %>%
+  dplyr::mutate(feature = factor(feature_test, levels = c(features_TP, features_FP)),
+                n = factor(n, levels = c(50, 100, 200))) %>%
+  dplyr::filter(penalize_method == "ridge",
+                sampling_method == "sequential") %>% 
+  ggplot(aes(x = n, y = p, 
+             color = method)) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.25), size = 3) +
+  facet_grid(feature ~ signal_strength) + 
+  ggtitle("ridge fits")
+
+tb_result %>%
+  dplyr::mutate(feature = factor(feature_test, levels = c(features_TP, features_FP)),
+                n = factor(n, levels = c(50, 100, 200))) %>%
+  dplyr::filter(penalize_method == "lasso",
+                sampling_method == "sequential") %>% 
+  ggplot(aes(x = n, y = p, 
+             color = method)) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.25), size = 3) +
+  facet_grid(feature ~ signal_strength) + 
+  ggtitle("lasso fits")
+```
