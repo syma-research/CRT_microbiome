@@ -1,3 +1,10 @@
+log_withzero <- function(x) {
+  if(any(x < 0))
+    stop("All values must be positive.")
+  x[x == 0] <- min(setdiff(x, 0), na.rm = TRUE) / 2
+  return(log(x))
+}
+
 logit <- function(x) log(x) - log(1 - x)
 
 expit <- function(x) 
